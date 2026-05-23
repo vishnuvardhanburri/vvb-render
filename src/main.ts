@@ -595,14 +595,14 @@ function startHttpServer() {
       }
       await renderDashboard(res, { type: 'success', message: 'Outreach cycle triggered in background.' });
     } else if (url === '/test-telegram' && req.method === 'POST') {
-      const success = await sendTelegramNotification(
+      const result = await sendTelegramNotification(
         `🔔 <b>Outreach Machine Connection Test</b>\n` +
         `If you are reading this, your Telegram Bot notifications are configured correctly! 🎉`
       );
-      if (success) {
+      if (result.success) {
         await renderDashboard(res, { type: 'success', message: 'Test Telegram message sent successfully!' });
       } else {
-        await renderDashboard(res, { type: 'error', message: 'Failed to send Telegram message. Check that TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set correctly in Render.' });
+        await renderDashboard(res, { type: 'error', message: `Failed to send Telegram message. Error: ${result.error || 'Unknown error'}` });
       }
     } else if (url === '/leads/reset-failed' && req.method === 'POST') {
       await query(
