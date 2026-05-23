@@ -11,6 +11,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const VISHNU_PORTFOLIO_CONTEXT = `
 Name: Vishnu Vardhan Burri
 Role: Senior Backend & Platform Engineer
+Website Portfolio: https://vishnuvardhanburri.in
 Principles: "Correctness over cleverness", "Deep observability before failure", "Boring systems that keep running", "Security and validation by default"
 Credentials:
 - Toptal Verified Expert in Engineering
@@ -79,8 +80,8 @@ CRITICAL GUIDELINES FOR HIGH RESPONSE RATE:
 1. DO NOT use generic sales fluff, corporate speak, or boilerplate introductions. (Avoid: "Hope this email finds you well", "I was checking your site", "I'm writing to you because", "We are a top agency").
 2. Start directly with a hook related to their job posting and engineering requirements (e.g. "Saw you're bringing on a backend engineer to handle your Go service concurrency..." or "Looks like you're scaling out your PostgreSQL database and Stripe billing pipeline...").
 3. Connect their immediate engineering challenge directly to one of Vishnu's specific case studies (e.g. Microsoft MTTR, Stripe double-charge prevention, or banking migrations).
-4. Propose a friction-free value offer: a quick 10-15 minute "System Signal Audit" where Vishnu reviews their architecture/bottlenecks for free and gives them a 3-step action plan they can use immediately (with no sales pitch). Mention a call booking link: https://cal.com/vishnuvardhanburri/30min
-5. The tone must be a peer-to-peer developer/technical founder communication: professional, humble, highly knowledgeable, and brief (under 120-150 words).
+4. Propose a friction-free value offer: a quick 10-15 minute "System Signal Audit" where Vishnu reviews their architecture/bottlenecks for free and gives them a 3-step action plan they can use immediately (with no sales pitch). Mention his call booking link: https://cal.com/vishnuvardhanburri/30min and his portfolio link: https://vishnuvardhanburri.in
+5. The tone must be a peer-to-peer developer/technical founder communication: professional, humble, highly knowledgeable, and brief (under 120-150 words). Make sure his website link (https://vishnuvardhanburri.in) is included in his sign-off.
 6. Subject line must be extremely short, casual, and lower-case to get opened (e.g. "concurrency query", "postgresql latency", "stripe integration", "on-call issues"). No capital letters, no sales words.
 7. If the list of scraped emails is empty or lacks a direct engineering/contact email, suggest the most logical email address to send this to (e.g. hello@, contact@, engineering@, info@, jobs@).
 `;
@@ -95,7 +96,7 @@ CRITICAL GUIDELINES:
 1. Keep it extremely brief (under 50-70 words).
 2. Do not repeat the whole pitch. Just ask if they had a chance to read the previous email or check out Vishnu's Microsoft case study (MTTR reduced by 40%).
 3. Reference their company name (${companyName}) and their backend engineering needs.
-4. Close with a friendly offer to chat: "Let me know if a 15-minute audit makes sense this week: https://cal.com/vishnuvardhanburri/30min"
+4. Close with a friendly offer to chat: "Let me know if a 15-minute audit makes sense this week: https://cal.com/vishnuvardhanburri/30min (Portfolio: https://vishnuvardhanburri.in)"
 5. Keep the subject line the same or draft a short one like "quick follow up" or "concurrency / scaling".
 `;
   } else {
@@ -109,7 +110,7 @@ CRITICAL GUIDELINES:
 1. Keep it extremely brief (under 60 words).
 2. State clearly that this is the last email you will send so you don't clutter their inbox.
 3. Ask if backend scaling/stability is a focus for ${companyName} this quarter. If not, no worries at all.
-4. Keep the tone warm, professional, and respectful of their time.
+4. Keep the tone warm, professional, and respectful of their time. Ensure you sign off with: "Best regards, Vishnu Vardhan Burri (https://vishnuvardhanburri.in)"
 5. Subject line should be the same as previous or "closing the loop".
 `;
   }
