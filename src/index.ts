@@ -557,7 +557,7 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
           </div>
 
           <div class="footer">
-            Build v1.0.0 // Powered by Brevo, Gemini & Supabase Postgres
+            Build v2.0.0 // Powered by MailBluster, Gemini & Supabase Postgres
           </div>
         </div>
       </body>

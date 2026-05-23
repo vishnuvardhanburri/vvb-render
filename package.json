@@ -1,13 +1,13 @@
 {
   "name": "vvb-render",
   "version": "1.0.0",
-  "description": "Zero-cost automated outreach machine using Brevo and Render",
+  "description": "Zero-cost automated outreach machine using MailBluster and Render",
   "main": "src/index.ts",
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
     "start": "tsx src/index.ts",
-    "build": "tsc",
+    "build": "echo 'No build needed - tsx runs TypeScript directly'",
     "db:init": "tsx src/db/init.ts",
     "db:migrate": "tsx src/db/migrate.ts"
   },
@@ -17,12 +17,12 @@
     "dotenv": "^16.4.7",
     "imapflow": "^1.0.166",
     "pg": "^8.13.1",
-    "rss-parser": "^3.13.0"
+    "rss-parser": "^3.13.0",
+    "tsx": "^4.19.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/pg": "^8.11.10",
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
 }
