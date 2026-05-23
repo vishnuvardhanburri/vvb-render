@@ -289,9 +289,16 @@ export async function researchAndPersonalizeLeads() {
     } catch (err) {
       await query('ROLLBACK');
       console.error(`Failed to process new lead ${lead.id}:`, err);
+      const errMsg = err instanceof Error ? err.message : String(err);
       await query(
-        `UPDATE leads SET status = 'scraping_failed', updated_at = NOW() WHERE id = $1`,
-        [lead.id]
+        `UPDATE leads SET status = 'scraping_failed', error_message = $1, updated_at = NOW() WHERE id = $2`,
+        [errMsg, lead.id]
+      );
+      await sendTelegramNotification(
+        `⚠️ <b>Lead Research Failure</b>\n` +
+        `Company: <b>${lead.company_name}</b>\n` +
+        `Domain: <code>${lead.domain}</code>\n` +
+        `Error: <code>${errMsg}</code>`
       );
     }
   }
@@ -354,6 +361,17 @@ export async function researchAndPersonalizeLeads() {
     } catch (err) {
       await query('ROLLBACK');
       console.error(`Failed to generate follow-up ${nextStep} for lead ${lead.id}:`, err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      await query(
+        `UPDATE leads SET status = 'failed', error_message = $1, updated_at = NOW() WHERE id = $2`,
+        [errMsg, lead.id]
+      );
+      await sendTelegramNotification(
+        `⚠️ <b>Follow-up Generation Failure</b>\n` +
+        `Company: <b>${lead.company_name}</b>\n` +
+        `Step: <b>Step ${nextStep}/3</b>\n` +
+        `Error: <code>${errMsg}</code>`
+      );
     }
   }
 }

@@ -122,11 +122,11 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
 
     // Fetch active campaigns (leads sent, waiting replies, or completed) with their email and reply content
     const leadsRes = await query(`
-      SELECT l.id, l.company_name, l.domain, l.contact_email, l.job_title, l.status, l.sequence_step, l.next_followup_at, l.reply_subject, l.reply_content,
+      SELECT l.id, l.company_name, l.domain, l.contact_email, l.job_title, l.status, l.sequence_step, l.next_followup_at, l.reply_subject, l.reply_content, l.error_message,
              (SELECT subject FROM emails WHERE lead_id = l.id AND sequence_step = l.sequence_step ORDER BY id DESC LIMIT 1) as email_subject,
              (SELECT body FROM emails WHERE lead_id = l.id AND sequence_step = l.sequence_step ORDER BY id DESC LIMIT 1) as email_body
       FROM leads l
-      WHERE l.status IN ('sent', 'replied', 'outreach_completed', 'validation_failed')
+      WHERE l.status IN ('sent', 'replied', 'outreach_completed', 'validation_failed', 'scraping_failed', 'failed')
       ORDER BY l.updated_at DESC LIMIT 30
     `);
 
@@ -641,6 +641,7 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
                                 lead.status === 'outreach_completed' ? 'badge-blue' :
                                 lead.status === 'sent' ? 'badge-yellow' : 'badge-red'
                               }">${lead.status}</span>
+                              ${lead.error_message ? `<div style="color:var(--danger); font-size:0.65rem; margin-top:0.25rem; max-width:180px; word-break:break-word;">${lead.error_message}</div>` : ''}
                             </td>
                             <td>Step ${lead.sequence_step}/3</td>
                             <td>
@@ -989,6 +990,7 @@ async function main() {
     await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS reply_subject VARCHAR(255) DEFAULT NULL;`);
     await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS ai_reply_draft TEXT DEFAULT NULL;`);
     await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS ai_reply_sent BOOLEAN DEFAULT FALSE;`);
+    await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS error_message TEXT DEFAULT NULL;`);
     
     // settings table
     await query(`
