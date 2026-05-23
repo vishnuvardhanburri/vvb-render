@@ -1,6 +1,7 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
 import { query } from '../db/client.js';
+import { sendTelegramNotification } from './telegram.js';
 
 dotenv.config();
 
@@ -48,7 +49,6 @@ export async function sendEmailViaBrevo(
     timeout: 10000
   });
 
-  // Brevo returns messageId on success (e.g. { "messageId": "<xxxx>" })
   if (response.data && response.data.messageId) {
     return response.data.messageId;
   }
@@ -57,12 +57,12 @@ export async function sendEmailViaBrevo(
 }
 
 /**
- * Processes the queue of validated emails and sends them, respecting the daily rate limit
+ * Processes the queue of validated & approved emails and sends them, respecting daily limits
  */
 export async function processOutboundEmails(limitCount: number = 10) {
-  console.log('Checking for validated emails ready to send...');
+  console.log('Checking for approved emails ready to send...');
   
-  // Calculate how many emails have already been sent today
+  // Calculate emails sent today
   const sentTodayRes = await query(
     `SELECT COUNT(*) as count 
      FROM emails 
@@ -72,23 +72,22 @@ export async function processOutboundEmails(limitCount: number = 10) {
   const maxDailyLimit = parseInt(process.env.DAILY_EMAIL_LIMIT || '250');
 
   if (sentToday >= maxDailyLimit) {
-    console.warn(`Daily outreach limit reached (${sentToday}/${maxDailyLimit} sent in the last 24h). Skipping dispatch.`);
+    console.warn(`Daily outreach limit reached (${sentToday}/${maxDailyLimit} sent). Skipping dispatch.`);
     return 0;
   }
 
-  // Calculate remaining slot count for this run
   const remainingToday = maxDailyLimit - sentToday;
   const currentRunLimit = Math.min(limitCount, remainingToday);
   
-  console.log(`Outreach stats today: ${sentToday}/${maxDailyLimit} sent. Available slot count for this batch: ${currentRunLimit}`);
+  console.log(`Outreach stats: ${sentToday}/${maxDailyLimit} sent. Available slot count for this batch: ${currentRunLimit}`);
   if (currentRunLimit <= 0) return 0;
 
-  // Retrieve validated pending emails
+  // Retrieve validated, approved and pending emails
   const res = await query(
-    `SELECT e.id, e.recipient_email, e.subject, e.body, e.lead_id 
+    `SELECT e.id, e.recipient_email, e.subject, e.body, e.lead_id, e.sequence_step, l.company_name
      FROM emails e
      JOIN leads l ON e.lead_id = l.id
-     WHERE e.status = 'pending' AND l.status = 'validated'
+     WHERE e.status = 'pending' AND l.status = 'validated' AND l.is_approved = TRUE
      ORDER BY e.id ASC LIMIT $1`,
     [currentRunLimit]
   );
@@ -97,9 +96,9 @@ export async function processOutboundEmails(limitCount: number = 10) {
   let sentCount = 0;
 
   for (const row of res.rows) {
-    const { id, recipient_email, subject, body, lead_id } = row;
+    const { id, recipient_email, subject, body, lead_id, sequence_step, company_name } = row;
     try {
-      console.log(`Sending email ${id} to ${recipient_email}...`);
+      console.log(`Sending Step ${sequence_step} email ${id} to ${recipient_email}...`);
       
       // Update state to 'sending' to avoid double sends
       await query(`UPDATE emails SET status = 'sending' WHERE id = $1`, [id]);
@@ -112,14 +111,42 @@ export async function processOutboundEmails(limitCount: number = 10) {
         `UPDATE emails SET status = 'sent', sent_at = NOW(), error_message = $1 WHERE id = $2`,
         [`MessageId: ${messageId}`, id]
       );
-      // Mark lead as sent
-      await query(
-        `UPDATE leads SET status = 'sent', updated_at = NOW() WHERE id = $1`,
-        [lead_id]
-      );
-      await query('COMMIT');
 
+      // Determine follow-up schedule
+      let nextStatus = 'sent';
+      let nextFollowupAt = null;
+
+      if (sequence_step === 1) {
+        nextFollowupAt = new Date();
+        nextFollowupAt.setDate(nextFollowupAt.getDate() + 3); // 3 days for step 2
+      } else if (sequence_step === 2) {
+        nextFollowupAt = new Date();
+        nextFollowupAt.setDate(nextFollowupAt.getDate() + 4); // 4 days for step 3
+      } else {
+        nextStatus = 'outreach_completed';
+      }
+
+      // Update lead
+      await query(
+        `UPDATE leads 
+         SET status = $1, is_approved = FALSE, next_followup_at = $2, updated_at = NOW() 
+         WHERE id = $3`,
+        [nextStatus, nextFollowupAt, lead_id]
+      );
+      
+      await query('COMMIT');
       console.log(`✔ Email successfully sent to ${recipient_email}. MsgId: ${messageId}`);
+      
+      // Telegram Notification
+      let emoji = sequence_step === 1 ? '🚀' : sequence_step === 2 ? '✉️' : '🏁';
+      await sendTelegramNotification(
+        `${emoji} <b>Outreach Sent Successfully</b>\n` +
+        `Company: <b>${company_name}</b>\n` +
+        `Recipient: <code>${recipient_email}</code>\n` +
+        `Step: <b>${sequence_step}/3</b>\n` +
+        (nextFollowupAt ? `Next Follow-up scheduled for: <i>${nextFollowupAt.toLocaleDateString()}</i>` : `Outreach sequence complete.`)
+      );
+
       sentCount++;
       
       // Sleep briefly between sends to look human
@@ -139,6 +166,13 @@ export async function processOutboundEmails(limitCount: number = 10) {
         [lead_id]
       );
       await query('COMMIT');
+
+      await sendTelegramNotification(
+        `⚠️ <b>Email Dispatch Failure</b>\n` +
+        `Company: <b>${company_name}</b>\n` +
+        `Recipient: <code>${recipient_email}</code>\n` +
+        `Error: <code>${errMsg}</code>`
+      );
     }
   }
 
