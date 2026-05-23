@@ -197,34 +197,62 @@ export async function researchAndPersonalizeLeads() {
 
       let finalEmail = lead.contact_email || scrapedEmails[0] || geminiResult.suggestedEmail || `hello@${lead.domain}`;
 
+      // Perform auto-validation
+      const { validateEmail } = await import('./validator.js');
+      const check = await validateEmail(finalEmail);
+
       await query('BEGIN');
       
-      // Update lead
-      await query(
-        `UPDATE leads 
-         SET contact_email = $1, research_notes = $2, status = 'researched', is_approved = FALSE, sequence_step = 1, updated_at = NOW()
-         WHERE id = $3`,
-        [finalEmail, scrapedText, lead.id]
-      );
-
-      // Insert pending draft email
-      await query(
-        `INSERT INTO emails (lead_id, recipient_email, subject, body, status, sequence_step)
-         VALUES ($1, $2, $3, $4, 'pending', 1)`,
-        [lead.id, finalEmail, geminiResult.subject, geminiResult.emailBody]
-      );
+      if (check.isValid) {
+        // Automatically approve and queue!
+        await query(
+          `UPDATE leads 
+           SET contact_email = $1, research_notes = $2, status = 'validated', is_approved = TRUE, sequence_step = 1, updated_at = NOW()
+           WHERE id = $3`,
+          [finalEmail, scrapedText, lead.id]
+        );
+        await query(
+          `INSERT INTO emails (lead_id, recipient_email, subject, body, status, sequence_step)
+           VALUES ($1, $2, $3, $4, 'pending', 1)`,
+          [lead.id, finalEmail, geminiResult.subject, geminiResult.emailBody]
+        );
+        
+        console.log(`✔ Researched ${lead.company_name} and automatically approved/queued Step 1 email for ${finalEmail}`);
+        
+        // Telegram Notification
+        await sendTelegramNotification(
+          `🚀 <b>Auto outreach queued</b>\n` +
+          `Company: <b>${lead.company_name}</b>\n` +
+          `Subject: <i>${geminiResult.subject}</i>\n` +
+          `Email: <code>${finalEmail}</code>\n\n` +
+          `Automatically validated and scheduled for sending.`
+        );
+      } else {
+        // Validation failed, do not send
+        await query(
+          `UPDATE leads 
+           SET contact_email = $1, research_notes = $2, status = 'validation_failed', is_approved = FALSE, sequence_step = 1, updated_at = NOW()
+           WHERE id = $3`,
+          [finalEmail, scrapedText, lead.id]
+        );
+        await query(
+          `INSERT INTO emails (lead_id, recipient_email, subject, body, status, sequence_step, error_message)
+           VALUES ($1, $2, $3, $4, 'failed', 1, $5)`,
+          [lead.id, finalEmail, geminiResult.subject, geminiResult.emailBody, check.reason]
+        );
+        
+        console.warn(`❌ Auto-validation failed for new lead ${lead.company_name}: ${check.reason}`);
+        
+        // Telegram Notification
+        await sendTelegramNotification(
+          `⚠️ <b>Validation failure on auto outreach</b>\n` +
+          `Company: <b>${lead.company_name}</b>\n` +
+          `Email: <code>${finalEmail}</code>\n` +
+          `Reason: <code>${check.reason}</code>`
+        );
+      }
 
       await query('COMMIT');
-      console.log(`✔ Researched ${lead.company_name} and saved Step 1 draft for ${finalEmail}`);
-      
-      // Telegram Notification
-      await sendTelegramNotification(
-        `📝 <b>New Outreach Draft Generated</b>\n` +
-        `Company: <b>${lead.company_name}</b>\n` +
-        `Subject: <i>${geminiResult.subject}</i>\n` +
-        `Email: <code>${finalEmail}</code>\n\n` +
-        `Review and approve this draft on your HUD dashboard.`
-      );
     } catch (err) {
       await query('ROLLBACK');
       console.error(`Failed to process new lead ${lead.id}:`, err);
@@ -263,15 +291,15 @@ export async function researchAndPersonalizeLeads() {
 
       await query('BEGIN');
       
-      // Update lead sequence step and status
+      // Automatically approve and queue the follow-up
       await query(
         `UPDATE leads 
-         SET status = 'researched', is_approved = FALSE, sequence_step = $1, updated_at = NOW()
+         SET status = 'validated', is_approved = TRUE, sequence_step = $1, updated_at = NOW()
          WHERE id = $2`,
         [nextStep, lead.id]
       );
 
-      // Insert pending draft follow-up email
+      // Insert pending email
       await query(
         `INSERT INTO emails (lead_id, recipient_email, subject, body, status, sequence_step)
          VALUES ($1, $2, $3, $4, 'pending', $5)`,
@@ -279,13 +307,12 @@ export async function researchAndPersonalizeLeads() {
       );
 
       await query('COMMIT');
-      console.log(`✔ Generated Step ${nextStep} follow-up draft for ${lead.company_name}`);
+      console.log(`✔ Automatically approved & queued Step ${nextStep} follow-up for ${lead.company_name}`);
 
       await sendTelegramNotification(
-        `📬 <b>Step ${nextStep} Follow-up Draft Ready</b>\n` +
+        `📬 <b>Auto follow-up Step ${nextStep} queued</b>\n` +
         `Company: <b>${lead.company_name}</b>\n` +
-        `Email: <code>${lead.contact_email}</code>\n\n` +
-        `Please approve on your HUD dashboard.`
+        `Email: <code>${lead.contact_email}</code>`
       );
     } catch (err) {
       await query('ROLLBACK');
