@@ -455,9 +455,16 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
             </div>
           </div>
 
-          <div class="tabs">
-            <button id="drafts-btn" class="tab-btn active" onclick="switchTab('drafts')">Drafts Queue (${draftsRes.rows.length})</button>
-            <button id="campaigns-btn" class="tab-btn" onclick="switchTab('campaigns')">Campaign Tracker (${leadsRes.rows.length})</button>
+          <div class="tabs" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); margin-bottom: 2rem; padding-bottom: 0.5rem;">
+            <div style="display: flex; gap: 0.5rem;">
+              <button id="drafts-btn" class="tab-btn active" onclick="switchTab('drafts')">Drafts Queue (${draftsRes.rows.length})</button>
+              <button id="campaigns-btn" class="tab-btn" onclick="switchTab('campaigns')">Campaign Tracker (${leadsRes.rows.length})</button>
+            </div>
+            ${stats.failed > 0 ? `
+              <form method="POST" action="/leads/reset-failed" style="margin: 0;">
+                <button type="submit" class="btn btn-danger" style="font-size:0.7rem; padding:0.4rem 0.8rem;">Reset Failed Leads</button>
+              </form>
+            ` : ''}
           </div>
 
           <!-- DRAFTS QUEUE SECTION -->
@@ -597,6 +604,11 @@ function startHttpServer() {
       } else {
         await renderDashboard(res, { type: 'error', message: 'Failed to send Telegram message. Check that TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set correctly in Render.' });
       }
+    } else if (url === '/leads/reset-failed' && req.method === 'POST') {
+      await query(
+        `UPDATE leads SET status = 'discovered', updated_at = NOW() WHERE status IN ('scraping_failed', 'failed', 'validation_failed')`
+      );
+      await renderDashboard(res, { type: 'success', message: 'All failed/bounced leads reset to Discovered status successfully.' });
     } else if (url === '/leads/replied' && req.method === 'POST') {
       const params = await parseFormBody(req);
       const leadId = params.get('leadId');
