@@ -150,8 +150,12 @@ Return your response ONLY as a JSON object matching this structure:
 
     const output: GeminiOutput = JSON.parse(jsonText.trim());
     return output;
-  } catch (error) {
+  } catch (error: any) {
     console.error(`Gemini API Error for ${companyName} (Step ${sequenceStep}):`, error instanceof Error ? error.message : error);
+    if (error.response?.data) {
+      const details = JSON.stringify(error.response.data);
+      throw new Error(`Gemini API Error (Step ${sequenceStep}): ${error.message} - Details: ${details}`);
+    }
     throw error;
   }
 }
@@ -431,8 +435,12 @@ Return ONLY the plain text email body of your reply. Do not wrap in JSON or add 
       throw new Error('Empty response from Gemini API');
     }
     return replyText.trim();
-  } catch (error) {
+  } catch (error: any) {
     console.error(`Gemini API Error generating reply for ${companyName}:`, error instanceof Error ? error.message : error);
+    if (error.response?.data) {
+      const details = JSON.stringify(error.response.data);
+      throw new Error(`Gemini API Error (Reply): ${error.message} - Details: ${details}`);
+    }
     throw error;
   }
 }
