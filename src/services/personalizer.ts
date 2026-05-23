@@ -7,6 +7,48 @@ dotenv.config();
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
+async function postToGeminiWithRetry(url: string, payload: any, timeoutMs: number = 20000, maxRetries: number = 5): Promise<any> {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    try {
+      const response = await axios.post(url, payload, {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: timeoutMs
+      });
+      return response;
+    } catch (error: any) {
+      attempt++;
+      const isRateLimit = error.response?.status === 429;
+      
+      if (isRateLimit && attempt < maxRetries) {
+        let delaySeconds = 20; // Default fallback delay
+        
+        // Try to parse retryDelay from error response details
+        const details = error.response?.data?.error?.details;
+        if (Array.isArray(details)) {
+          const retryInfo = details.find((d: any) => d.retryDelay || d['@type']?.includes('RetryInfo'));
+          if (retryInfo && retryInfo.retryDelay) {
+            const parsed = parseFloat(retryInfo.retryDelay);
+            if (!isNaN(parsed) && parsed > 0) {
+              delaySeconds = Math.ceil(parsed);
+            }
+          }
+        }
+        
+        console.warn(`[Gemini API] Quota/Rate limit reached. Retrying attempt ${attempt}/${maxRetries} after waiting ${delaySeconds}s...`);
+        
+        // Wait for delaySeconds
+        await new Promise(resolve => setTimeout(resolve, delaySeconds * 1000));
+        continue;
+      }
+      
+      // If we ran out of retries or it's not a rate limit error, rethrow
+      throw error;
+    }
+  }
+  throw new Error('Max retries exceeded calling Gemini API');
+}
+
 // Vishnu's background data taken from portfolio constants.ts
 const VISHNU_PORTFOLIO_CONTEXT = `
 Name: Vishnu Vardhan Burri
@@ -125,7 +167,7 @@ Return your response ONLY as a JSON object matching this structure:
 `;
 
   try {
-    const response = await axios.post(
+    const response = await postToGeminiWithRetry(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
         contents: [
@@ -137,10 +179,8 @@ Return your response ONLY as a JSON object matching this structure:
           responseMimeType: 'application/json'
         }
       },
-      {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 15000
-      }
+      15000,
+      5
     );
 
     const jsonText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -290,6 +330,9 @@ export async function researchAndPersonalizeLeads() {
       }
 
       await query('COMMIT');
+      
+      // Respect Gemini rate limit: pause 2 seconds between leads
+      await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (err) {
       await query('ROLLBACK');
       console.error(`Failed to process new lead ${lead.id}:`, err);
@@ -362,6 +405,9 @@ export async function researchAndPersonalizeLeads() {
         `Company: <b>${lead.company_name}</b>\n` +
         `Email: <code>${lead.contact_email}</code>`
       );
+      
+      // Respect Gemini rate limit: pause 2 seconds between leads
+      await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (err) {
       await query('ROLLBACK');
       console.error(`Failed to generate follow-up ${nextStep} for lead ${lead.id}:`, err);
@@ -415,7 +461,7 @@ Return ONLY the plain text email body of your reply. Do not wrap in JSON or add 
 `;
 
   try {
-    const response = await axios.post(
+    const response = await postToGeminiWithRetry(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
         contents: [
@@ -424,10 +470,8 @@ Return ONLY the plain text email body of your reply. Do not wrap in JSON or add 
           }
         ]
       },
-      {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 20000
-      }
+      20000,
+      5
     );
 
     const replyText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
