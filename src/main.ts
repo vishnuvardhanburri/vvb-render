@@ -92,6 +92,7 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
         COUNT(*) FILTER (WHERE status = 'validated') as validated,
         COUNT(*) FILTER (WHERE status = 'sent') as sent,
         COUNT(*) FILTER (WHERE status = 'replied') as replied,
+        COUNT(*) FILTER (WHERE status = 'outreach_completed') as completed,
         COUNT(*) FILTER (WHERE status = 'failed' OR status = 'validation_failed' OR status = 'scraping_failed') as failed
       FROM leads
     `);
@@ -109,9 +110,9 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
       ORDER BY e.id ASC
     `);
 
-    // Fetch active campaigns (leads sent, waiting replies, or completed) with their email content
+    // Fetch active campaigns (leads sent, waiting replies, or completed) with their email and reply content
     const leadsRes = await query(`
-      SELECT l.id, l.company_name, l.domain, l.contact_email, l.job_title, l.status, l.sequence_step, l.next_followup_at,
+      SELECT l.id, l.company_name, l.domain, l.contact_email, l.job_title, l.status, l.sequence_step, l.next_followup_at, l.reply_subject, l.reply_content,
              (SELECT subject FROM emails WHERE lead_id = l.id AND sequence_step = l.sequence_step ORDER BY id DESC LIMIT 1) as email_subject,
              (SELECT body FROM emails WHERE lead_id = l.id AND sequence_step = l.sequence_step ORDER BY id DESC LIMIT 1) as email_body
       FROM leads l
@@ -122,6 +123,9 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
     const stats = statsRes.rows[0];
     const sentToday = sentTodayRes.rows[0].count || 0;
     const dailyLimit = process.env.DAILY_EMAIL_LIMIT || 250;
+
+    const totalContacted = Number(stats.sent) + Number(stats.replied) + Number(stats.completed);
+    const replyRate = totalContacted > 0 ? ((Number(stats.replied) / totalContacted) * 100).toFixed(1) : '0.0';
 
     const html = `
       <!DOCTYPE html>
@@ -405,6 +409,16 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
           function showEmailModal(id) {
             const subject = document.getElementById('email-subj-' + id).innerText;
             const body = document.getElementById('email-body-' + id).innerText;
+            document.getElementById('modal-title').innerText = 'Outreach Email Content';
+            document.getElementById('modal-subject').innerText = subject;
+            document.getElementById('modal-body').innerText = body;
+            document.getElementById('email-modal').style.display = 'flex';
+          }
+
+          function showReplyModal(id) {
+            const subject = document.getElementById('reply-subj-' + id).innerText;
+            const body = document.getElementById('reply-body-' + id).innerText;
+            document.getElementById('modal-title').innerText = 'Client Reply Content';
             document.getElementById('modal-subject').innerText = subject;
             document.getElementById('modal-body').innerText = body;
             document.getElementById('email-modal').style.display = 'flex';
@@ -462,6 +476,10 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
             <div class="stat-card">
               <div class="stat-value green" style="color:var(--success);">${stats.replied}</div>
               <div class="stat-label">Replies</div>
+            </div>
+            <div class="stat-card" style="border: 1px solid var(--border-glow);">
+              <div class="stat-value green" style="color:var(--primary);">${replyRate}%</div>
+              <div class="stat-label">Reply Rate</div>
             </div>
             <div class="stat-card">
               <div class="stat-value red">${stats.failed}</div>
@@ -570,13 +588,18 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
                                   <div id="email-body-${lead.id}" style="display:none;">${lead.email_body}</div>
                                   <button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size:0.65rem;" onclick="showEmailModal(${lead.id})">View Email</button>
                                 ` : ''}
+                                ${lead.status === 'replied' && lead.reply_content ? `
+                                  <div id="reply-subj-${lead.id}" style="display:none;">${lead.reply_subject || 'Reply'}</div>
+                                  <div id="reply-body-${lead.id}" style="display:none;">${lead.reply_content}</div>
+                                  <button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size:0.65rem; background:var(--success); border-color:var(--success); color:#fff;" onclick="showReplyModal(${lead.id})">View Reply</button>
+                                ` : ''}
                                 ${lead.status !== 'replied' && lead.status !== 'outreach_completed' && lead.status !== 'validation_failed' ? `
                                   <form method="POST" action="/leads/replied" style="margin:0; display:inline;">
                                     <input type="hidden" name="leadId" value="${lead.id}" />
                                     <button type="submit" class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size:0.65rem;">Mark Replied</button>
                                   </form>
                                 ` : ''}
-                                ${!lead.email_subject && (lead.status === 'replied' || lead.status === 'outreach_completed') ? '—' : ''}
+                                ${!lead.email_subject && !lead.reply_content && (lead.status === 'replied' || lead.status === 'outreach_completed') ? '—' : ''}
                               </div>
                             </td>
                           </tr>
@@ -592,7 +615,7 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
           <div id="email-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:1000; justify-content:center; align-items:center; backdrop-filter:blur(4px);">
             <div style="background:var(--surface); border:1px solid var(--border); padding:2rem; border-radius:12px; width:90%; max-width:600px; box-shadow:0 20px 50px rgba(0,0,0,0.9); font-family:inherit;">
               <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:1rem; margin-bottom:1rem;">
-                <h3 style="margin:0; color:var(--text-white); font-size:1rem; text-transform:uppercase; letter-spacing:0.1em;">Outreach Email Content</h3>
+                <h3 style="margin:0; color:var(--text-white); font-size:1rem; text-transform:uppercase; letter-spacing:0.1em;" id="modal-title">Outreach Email Content</h3>
                 <button onclick="hideEmailModal()" style="background:transparent; border:none; color:#6b7280; font-size:1.5rem; cursor:pointer; font-weight:bold; padding:0;">&times;</button>
               </div>
               <div style="font-size:0.8rem; margin-bottom:1rem;">
@@ -776,8 +799,18 @@ function startHttpServer() {
 }
 
 // System entry point
-function main() {
+async function main() {
   console.log('Outreach Machine Engine starting...');
+  
+  // Auto-run schema updates
+  try {
+    await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS reply_content TEXT DEFAULT NULL;`);
+    await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS reply_subject VARCHAR(255) DEFAULT NULL;`);
+    console.log('✔ Database schema verified and updated (reply_content, reply_subject).');
+  } catch (err) {
+    console.error('Failed to run database schema updates on startup:', err);
+  }
+  
   startHttpServer();
   startScheduler();
 }

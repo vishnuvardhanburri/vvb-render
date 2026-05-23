@@ -56,7 +56,7 @@ export async function checkInboxReplies(): Promise<number> {
         console.log(`Analyzing ${messages.length} messages for lead responses...`);
         
         for (const uid of messages) {
-          const fetchResult = await client.fetchOne(uid, { envelope: true });
+          const fetchResult = await client.fetchOne(uid, { envelope: true, bodyParts: ['TEXT'] });
           
           if (!fetchResult || !fetchResult.envelope) continue;
           
@@ -77,13 +77,21 @@ export async function checkInboxReplies(): Promise<number> {
             const lead = leadRes.rows[0];
             console.log(`🔥 Response detected from lead ${lead.company_name} (${fromAddress})!`);
             
+            let replyContent = '';
+            if (fetchResult.bodyParts) {
+              const textPart = fetchResult.bodyParts.get('TEXT');
+              if (textPart) {
+                replyContent = textPart.toString();
+              }
+            }
+
             await query('BEGIN');
-            // Update lead status to replied
+            // Update lead status to replied and store reply content
             await query(
               `UPDATE leads 
-               SET status = 'replied', next_followup_at = NULL, updated_at = NOW() 
-               WHERE id = $1`,
-              [lead.id]
+               SET status = 'replied', reply_subject = $1, reply_content = $2, next_followup_at = NULL, updated_at = NOW() 
+               WHERE id = $3`,
+              [envelope.subject || '(No Subject)', replyContent.slice(0, 10000), lead.id]
             );
             await query('COMMIT');
             
@@ -92,6 +100,7 @@ export async function checkInboxReplies(): Promise<number> {
                             `Company: <b>${lead.company_name}</b>\n` +
                             `Email: <code>${fromAddress}</code>\n` +
                             `Subject: <i>${envelope.subject || '(No Subject)'}</i>\n\n` +
+                            (replyContent ? `Reply:\n<code>${replyContent.slice(0, 400)}${replyContent.length > 400 ? '...' : ''}</code>\n\n` : '') +
                             `Outreach sequence has been <b>stopped</b>. Go close the deal!`;
             
             await sendTelegramNotification(message);
