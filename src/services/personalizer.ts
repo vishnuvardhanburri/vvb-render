@@ -162,6 +162,15 @@ Return your response ONLY as a JSON object matching this structure:
 export async function researchAndPersonalizeLeads() {
   console.log('Running company research and email personalization...');
   
+  // Fetch configurations
+  const settingsRes = await query(`SELECT key, value FROM system_settings`);
+  const settings: Record<string, string> = {};
+  settingsRes.rows.forEach(r => {
+    settings[r.key] = r.value;
+  });
+  const draftApprovalRequired = settings['draft_approval_required'] === 'true';
+  const autoFollowupEnabled = settings['auto_followup_enabled'] !== 'false';
+  
   // -- PART A: Process newly discovered leads (Step 1) --
   const newLeads = await query(
     "SELECT * FROM leads WHERE status = 'discovered' ORDER BY id ASC LIMIT 10"
@@ -205,29 +214,52 @@ export async function researchAndPersonalizeLeads() {
       await query('BEGIN');
       
       if (check.isValid) {
-        // Automatically approve and queue!
-        await query(
-          `UPDATE leads 
-           SET contact_email = $1, research_notes = $2, status = 'validated', is_approved = TRUE, sequence_step = 1, updated_at = NOW()
-           WHERE id = $3`,
-          [finalEmail, scrapedText, lead.id]
-        );
-        await query(
-          `INSERT INTO emails (lead_id, recipient_email, subject, body, status, sequence_step)
-           VALUES ($1, $2, $3, $4, 'pending', 1)`,
-          [lead.id, finalEmail, geminiResult.subject, geminiResult.emailBody]
-        );
-        
-        console.log(`✔ Researched ${lead.company_name} and automatically approved/queued Step 1 email for ${finalEmail}`);
-        
-        // Telegram Notification
-        await sendTelegramNotification(
-          `🚀 <b>Auto outreach queued</b>\n` +
-          `Company: <b>${lead.company_name}</b>\n` +
-          `Subject: <i>${geminiResult.subject}</i>\n` +
-          `Email: <code>${finalEmail}</code>\n\n` +
-          `Automatically validated and scheduled for sending.`
-        );
+        if (draftApprovalRequired) {
+          // Keep as draft researched (unapproved)
+          await query(
+            `UPDATE leads 
+             SET contact_email = $1, research_notes = $2, status = 'researched', is_approved = FALSE, sequence_step = 1, updated_at = NOW()
+             WHERE id = $3`,
+            [finalEmail, scrapedText, lead.id]
+          );
+          await query(
+            `INSERT INTO emails (lead_id, recipient_email, subject, body, status, sequence_step)
+             VALUES ($1, $2, $3, $4, 'pending', 1)`,
+            [lead.id, finalEmail, geminiResult.subject, geminiResult.emailBody]
+          );
+          console.log(`✔ Researched ${lead.company_name} and queued draft Step 1 email for manual review.`);
+          await sendTelegramNotification(
+            `📝 <b>New draft ready for review</b>\n` +
+            `Company: <b>${lead.company_name}</b>\n` +
+            `Subject: <i>${geminiResult.subject}</i>\n` +
+            `Email: <code>${finalEmail}</code>\n\n` +
+            `Waiting for approval in HUD dashboard.`
+          );
+        } else {
+          // Automatically approve and queue!
+          await query(
+            `UPDATE leads 
+             SET contact_email = $1, research_notes = $2, status = 'validated', is_approved = TRUE, sequence_step = 1, updated_at = NOW()
+             WHERE id = $3`,
+            [finalEmail, scrapedText, lead.id]
+          );
+          await query(
+            `INSERT INTO emails (lead_id, recipient_email, subject, body, status, sequence_step)
+             VALUES ($1, $2, $3, $4, 'pending', 1)`,
+            [lead.id, finalEmail, geminiResult.subject, geminiResult.emailBody]
+          );
+          
+          console.log(`✔ Researched ${lead.company_name} and automatically approved/queued Step 1 email for ${finalEmail}`);
+          
+          // Telegram Notification
+          await sendTelegramNotification(
+            `🚀 <b>Auto outreach queued</b>\n` +
+            `Company: <b>${lead.company_name}</b>\n` +
+            `Subject: <i>${geminiResult.subject}</i>\n` +
+            `Email: <code>${finalEmail}</code>\n\n` +
+            `Automatically validated and scheduled for sending.`
+          );
+        }
       } else {
         // Validation failed, do not send
         await query(
@@ -265,6 +297,10 @@ export async function researchAndPersonalizeLeads() {
   }
 
   // -- PART B: Process pending follow-ups (Step 2 and Step 3) --
+  if (!autoFollowupEnabled) {
+    console.log('Auto-Followup is disabled in system settings. Skipping Part B.');
+    return;
+  }
   const followups = await query(
     `SELECT * FROM leads 
      WHERE status = 'sent' 
@@ -319,5 +355,66 @@ export async function researchAndPersonalizeLeads() {
       await query('ROLLBACK');
       console.error(`Failed to generate follow-up ${nextStep} for lead ${lead.id}:`, err);
     }
+  }
+}
+
+/**
+ * Generates an AI-drafted reply to a client's response using Gemini.
+ */
+export async function generateAiReply(companyName: string, clientReply: string): Promise<string> {
+  if (!GEMINI_API_KEY) {
+    throw new Error('Missing GEMINI_API_KEY in environment variables.');
+  }
+
+  const prompt = `
+You are Vishnu Vardhan Burri, a Toptal-verified Senior Backend & Platform Engineer. 
+A prospective client from ${companyName} has responded to your cold outreach email.
+
+Here is the client's reply:
+---
+${clientReply}
+---
+
+Here is your professional context and service offerings for reference:
+---
+${VISHNU_PORTFOLIO_CONTEXT}
+---
+
+Your goal is to write a highly professional, contextual, and helpful response.
+GUIDELINES:
+1. Address any specific questions they asked in their email.
+2. Maintain a peer-to-peer, technical-founder tone: professional, helpful, humble, and expert.
+3. Offer to hop on a quick 10-15 minute call to chat or run a free System Signal Audit.
+4. Include your booking link: https://cal.com/vishnuvardhanburri/30min
+5. Include your portfolio website: https://vishnuvardhanburri.in
+6. Keep the email response concise and direct (under 150-180 words).
+
+Return ONLY the plain text email body of your reply. Do not wrap in JSON or add any extra text or conversational fluff before/after the email body.
+`;
+
+  try {
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        contents: [
+          {
+            parts: [{ text: prompt }]
+          }
+        ]
+      },
+      {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 20000
+      }
+    );
+
+    const replyText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!replyText) {
+      throw new Error('Empty response from Gemini API');
+    }
+    return replyText.trim();
+  } catch (error) {
+    console.error(`Gemini API Error generating reply for ${companyName}:`, error instanceof Error ? error.message : error);
+    throw error;
   }
 }

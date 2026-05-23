@@ -2,6 +2,8 @@ import { ImapFlow } from 'imapflow';
 import dotenv from 'dotenv';
 import { query } from '../db/client.js';
 import { sendTelegramNotification } from './telegram.js';
+import { generateAiReply } from './personalizer.js';
+import { sendSmtpEmail } from './smtp.js';
 
 dotenv.config();
 
@@ -69,7 +71,7 @@ export async function checkInboxReplies(): Promise<number> {
           const leadRes = await query(
             `SELECT id, company_name, contact_email, status 
              FROM leads 
-             WHERE LOWER(contact_email) = $1 AND status != 'replied'`,
+             WHERE LOWER(contact_email) = $1 AND (status != 'replied' OR reply_content IS NULL)`,
             [fromAddress]
           );
           
@@ -85,13 +87,33 @@ export async function checkInboxReplies(): Promise<number> {
               }
             }
 
+            // Generate AI reply draft
+            let aiReplyDraft = '';
+            try {
+              aiReplyDraft = await generateAiReply(lead.company_name, replyContent);
+              console.log(`✔ Generated AI reply draft for ${lead.company_name}`);
+            } catch (geminiErr) {
+              console.warn(`Failed to generate AI reply draft for ${lead.company_name}:`, geminiErr);
+            }
+
+            // Check database setting for auto-reply
+            const settingsRes = await query(`SELECT value FROM system_settings WHERE key = 'auto_reply_enabled'`);
+            const autoReplyEnabled = settingsRes.rows[0]?.value !== 'false';
+
+            let replySent = false;
+            if (autoReplyEnabled && aiReplyDraft) {
+              const replySubject = envelope.subject ? (envelope.subject.toLowerCase().startsWith('re:') ? envelope.subject : `Re: ${envelope.subject}`) : `Re: Outreach Vishnu Vardhan Burri`;
+              const htmlBody = aiReplyDraft.replace(/\n/g, '<br>');
+              replySent = await sendSmtpEmail(fromAddress, replySubject, htmlBody);
+            }
+
             await query('BEGIN');
-            // Update lead status to replied and store reply content
+            // Update lead status to replied and store reply content + AI draft
             await query(
               `UPDATE leads 
-               SET status = 'replied', reply_subject = $1, reply_content = $2, next_followup_at = NULL, updated_at = NOW() 
-               WHERE id = $3`,
-              [envelope.subject || '(No Subject)', replyContent.slice(0, 10000), lead.id]
+               SET status = 'replied', reply_subject = $1, reply_content = $2, ai_reply_draft = $3, ai_reply_sent = $4, next_followup_at = NULL, updated_at = NOW() 
+               WHERE id = $5`,
+              [envelope.subject || '(No Subject)', replyContent.slice(0, 10000), aiReplyDraft, replySent, lead.id]
             );
             await query('COMMIT');
             
@@ -101,7 +123,10 @@ export async function checkInboxReplies(): Promise<number> {
                             `Email: <code>${fromAddress}</code>\n` +
                             `Subject: <i>${envelope.subject || '(No Subject)'}</i>\n\n` +
                             (replyContent ? `Reply:\n<code>${replyContent.slice(0, 400)}${replyContent.length > 400 ? '...' : ''}</code>\n\n` : '') +
-                            `Outreach sequence has been <b>stopped</b>. Go close the deal!`;
+                            (replySent 
+                              ? `⚡ <b>Auto-reply sent successfully via SMTP!</b>` 
+                              : aiReplyDraft ? `📝 <b>AI reply drafted & saved to HUD dashboard.</b>` : '') +
+                            `\n\nOutreach sequence has been <b>stopped</b>.`;
             
             await sendTelegramNotification(message);
             repliedCount++;

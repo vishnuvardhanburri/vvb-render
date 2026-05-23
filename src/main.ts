@@ -84,6 +84,16 @@ function parseFormBody(req: http.IncomingMessage): Promise<URLSearchParams> {
  */
 async function renderDashboard(res: http.ServerResponse, notification?: { type: 'success' | 'error'; message: string }) {
   try {
+    // Fetch settings
+    const settingsRes = await query(`SELECT key, value FROM system_settings`);
+    const settings: Record<string, string> = {};
+    settingsRes.rows.forEach(r => {
+      settings[r.key] = r.value;
+    });
+    const autoReplyEnabled = settings['auto_reply_enabled'] !== 'false';
+    const autoFollowupEnabled = settings['auto_followup_enabled'] !== 'false';
+    const draftApprovalRequired = settings['draft_approval_required'] === 'true';
+
     // Fetch stats
     const statsRes = await query(`
       SELECT 
@@ -126,6 +136,9 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
 
     const totalContacted = Number(stats.sent) + Number(stats.replied) + Number(stats.completed);
     const replyRate = totalContacted > 0 ? ((Number(stats.replied) / totalContacted) * 100).toFixed(1) : '0.0';
+
+    const isMailBlusterConfigured = process.env.MAILBLUSTER_API_KEY && process.env.MAILBLUSTER_API_KEY !== 'your_mailbluster_api_key_here';
+    const isGeminiConfigured = process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'your_gemini_api_key_here';
 
     const html = `
       <!DOCTYPE html>
@@ -424,6 +437,22 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
             document.getElementById('email-modal').style.display = 'flex';
           }
 
+          function showDraftModal(id) {
+            const subject = document.getElementById('reply-subj-' + id).innerText;
+            const clientReply = document.getElementById('reply-body-' + id).innerText;
+            const aiDraft = document.getElementById('ai-draft-' + id).innerText;
+            
+            document.getElementById('draft-modal-lead-id').value = id;
+            document.getElementById('draft-modal-subject').innerText = 'Re: ' + subject;
+            document.getElementById('draft-modal-client-reply').innerText = clientReply;
+            document.getElementById('draft-modal-textarea').value = aiDraft;
+            document.getElementById('draft-modal').style.display = 'flex';
+          }
+
+          function hideDraftModal() {
+            document.getElementById('draft-modal').style.display = 'none';
+          }
+
           function hideEmailModal() {
             document.getElementById('email-modal').style.display = 'none';
           }
@@ -448,6 +477,20 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
               </form>
             </div>
           </header>
+
+          ${!isMailBlusterConfigured ? `
+            <div class="alert alert-error" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: var(--danger); margin-bottom: 1.5rem;">
+              <span>⚠️</span>
+              <span><b>MailBluster API Key is not set!</b> Please configure <code>MAILBLUSTER_API_KEY</code> in your environment or <code>.env</code> file. Without this key, email dispatching will fail.</span>
+            </div>
+          ` : ''}
+
+          ${!isGeminiConfigured ? `
+            <div class="alert alert-error" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: var(--danger); margin-bottom: 1.5rem;">
+              <span>⚠️</span>
+              <span><b>Gemini API Key is not set!</b> Please configure <code>GEMINI_API_KEY</code> in your environment or <code>.env</code> file. Without this key, AI lead research and reply generation will fail.</span>
+            </div>
+          ` : ''}
 
           ${notification ? `
             <div class="alert alert-${notification.type}">
@@ -485,6 +528,32 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
               <div class="stat-value red">${stats.failed}</div>
               <div class="stat-label">Bounces/Fails</div>
             </div>
+          </div>
+
+          <!-- AUTOMATION CONTROLS PANEL -->
+          <div style="display: flex; gap: 1rem; align-items: center; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border); padding: 0.75rem 1.2rem; border-radius: 8px; margin-bottom: 2rem;">
+            <span style="font-size: 0.7rem; text-transform: uppercase; color: #6b7280; font-weight: bold; letter-spacing: 0.05em;">Automation Settings:</span>
+            
+            <form method="POST" action="/settings/toggle-reply" style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+              <span style="font-size: 0.7rem; color: var(--text);">Auto-Reply:</span>
+              <button type="submit" class="btn" style="padding: 0.35rem 0.7rem; font-size: 0.65rem; background: ${autoReplyEnabled ? 'rgba(16, 185, 129, 0.15)' : 'transparent'}; border: 1px solid ${autoReplyEnabled ? 'var(--success)' : 'var(--border)'}; color: ${autoReplyEnabled ? 'var(--success)' : 'var(--text)'};">
+                ${autoReplyEnabled ? '● ENABLED' : '○ DISABLED'}
+              </button>
+            </form>
+
+            <form method="POST" action="/settings/toggle-followup" style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+              <span style="font-size: 0.7rem; color: var(--text);">Auto-Followup:</span>
+              <button type="submit" class="btn" style="padding: 0.35rem 0.7rem; font-size: 0.65rem; background: ${autoFollowupEnabled ? 'rgba(16, 185, 129, 0.15)' : 'transparent'}; border: 1px solid ${autoFollowupEnabled ? 'var(--success)' : 'var(--border)'}; color: ${autoFollowupEnabled ? 'var(--success)' : 'var(--text)'};">
+                ${autoFollowupEnabled ? '● ENABLED' : '○ DISABLED'}
+              </button>
+            </form>
+
+            <form method="POST" action="/settings/toggle-approval" style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+              <span style="font-size: 0.7rem; color: var(--text);">Draft Mode:</span>
+              <button type="submit" class="btn" style="padding: 0.35rem 0.7rem; font-size: 0.65rem; background: ${draftApprovalRequired ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.15)'}; border: 1px solid ${draftApprovalRequired ? 'var(--warning)' : 'var(--success)'}; color: ${draftApprovalRequired ? 'var(--warning)' : 'var(--success)'};" title="${draftApprovalRequired ? 'Drafts are held for review' : 'Drafts are sent automatically'}">
+                ${draftApprovalRequired ? '● MANUAL APPROVAL' : '⚡ FULLY AUTO'}
+              </button>
+            </form>
           </div>
 
           <div class="tabs" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); margin-bottom: 2rem; padding-bottom: 0.5rem;">
@@ -593,6 +662,14 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
                                   <div id="reply-body-${lead.id}" style="display:none;">${lead.reply_content}</div>
                                   <button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size:0.65rem; background:var(--success); border-color:var(--success); color:#fff;" onclick="showReplyModal(${lead.id})">View Reply</button>
                                 ` : ''}
+                                ${lead.status === 'replied' && lead.ai_reply_draft ? `
+                                  <div id="ai-draft-${lead.id}" style="display:none;">${lead.ai_reply_draft}</div>
+                                  ${lead.ai_reply_sent ? `
+                                    <span class="badge badge-green" style="font-size:0.65rem;">AI Replied</span>
+                                  ` : `
+                                    <button class="btn btn-primary" style="padding: 0.3rem 0.6rem; font-size:0.65rem;" onclick="showDraftModal(${lead.id})">Draft AI Reply</button>
+                                  `}
+                                ` : ''}
                                 ${lead.status !== 'replied' && lead.status !== 'outreach_completed' && lead.status !== 'validation_failed' ? `
                                   <form method="POST" action="/leads/replied" style="margin:0; display:inline;">
                                     <input type="hidden" name="leadId" value="${lead.id}" />
@@ -625,6 +702,40 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
               <div style="margin-top:1.5rem; text-align:right;">
                 <button class="btn btn-secondary" onclick="hideEmailModal()">Close</button>
               </div>
+            </div>
+          </div>
+
+          <!-- Send AI Reply Draft Modal -->
+          <div id="draft-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:1000; justify-content:center; align-items:center; backdrop-filter:blur(4px);">
+            <div style="background:var(--surface); border:1px solid var(--border); padding:2rem; border-radius:12px; width:90%; max-width:650px; box-shadow:0 20px 50px rgba(0,0,0,0.9); font-family:inherit;">
+              <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:1rem; margin-bottom:1rem;">
+                <h3 style="margin:0; color:var(--text-white); font-size:1rem; text-transform:uppercase; letter-spacing:0.1em;">Review AI Reply Draft</h3>
+                <button onclick="hideDraftModal()" style="background:transparent; border:none; color:#6b7280; font-size:1.5rem; cursor:pointer; font-weight:bold; padding:0;">&times;</button>
+              </div>
+              
+              <div style="font-size:0.75rem; color:#6b7280; margin-bottom:0.5rem; max-height:100px; overflow-y:auto; padding:0.5rem; background:#000; border:1px solid var(--border); border-radius:4px;">
+                <b style="color:var(--text-white);">Client's Last Message:</b>
+                <div id="draft-modal-client-reply" style="white-space:pre-wrap; margin-top:0.25rem;"></div>
+              </div>
+
+              <form method="POST" action="/leads/send-ai-reply">
+                <input type="hidden" name="leadId" id="draft-modal-lead-id" value="" />
+                
+                <div style="font-size:0.8rem; margin-bottom:0.75rem;">
+                  <b style="color:var(--text-white);">Subject:</b> <span id="draft-modal-subject" style="color:var(--primary);"></span>
+                </div>
+
+                <label style="font-size:0.75rem; color:#6b7280; display:block; margin-bottom:0.25rem;">AI Generated Response (Edit as needed)</label>
+                <textarea name="replyBody" id="draft-modal-textarea" class="input-field" style="min-height:220px; line-height:1.5;" required></textarea>
+                
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <span style="font-size:0.65rem; color:#6b7280;">Sent directly from your Hostinger inbox</span>
+                  <div class="btn-group">
+                    <button type="button" class="btn btn-secondary" onclick="hideDraftModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary" style="background:var(--success); border-color:var(--success); color:#fff;">Send AI Reply</button>
+                  </div>
+                </div>
+              </form>
             </div>
           </div>
 
@@ -695,6 +806,46 @@ function startHttpServer() {
         await renderDashboard(res, { type: 'success', message: 'Lead marked as replied. Sequences stopped.' });
       } else {
         await renderDashboard(res, { type: 'error', message: 'Invalid lead ID.' });
+      }
+    } else if (url === '/leads/send-ai-reply' && req.method === 'POST') {
+      const params = await parseFormBody(req);
+      const leadId = params.get('leadId');
+      const replyBody = params.get('replyBody');
+
+      if (leadId && replyBody) {
+        // Fetch lead details
+        const leadRes = await query(`SELECT company_name, contact_email, reply_subject FROM leads WHERE id = $1`, [leadId]);
+        if (leadRes.rows.length > 0) {
+          const lead = leadRes.rows[0];
+          const subject = lead.reply_subject ? (lead.reply_subject.toLowerCase().startsWith('re:') ? lead.reply_subject : `Re: ${lead.reply_subject}`) : `Re: Outreach Vishnu Vardhan Burri`;
+          const htmlBody = replyBody.replace(/\n/g, '<br>');
+          
+          const { sendSmtpEmail } = await import('./services/smtp.js');
+          const success = await sendSmtpEmail(lead.contact_email, subject, htmlBody);
+          
+          if (success) {
+            await query(
+              `UPDATE leads SET ai_reply_draft = $1, ai_reply_sent = TRUE, updated_at = NOW() WHERE id = $2`,
+              [replyBody, leadId]
+            );
+            
+            // Notify Telegram
+            await sendTelegramNotification(
+              `✉️ <b>AI Reply Sent manually</b>\n` +
+              `Company: <b>${lead.company_name}</b>\n` +
+              `To: <code>${lead.contact_email}</code>\n\n` +
+              `Sent directly via Hostinger SMTP.`
+            );
+
+            await renderDashboard(res, { type: 'success', message: `AI Reply successfully sent to ${lead.company_name}!` });
+          } else {
+            await renderDashboard(res, { type: 'error', message: 'Failed to send email. Check your SMTP configuration.' });
+          }
+        } else {
+          await renderDashboard(res, { type: 'error', message: 'Lead not found.' });
+        }
+      } else {
+        await renderDashboard(res, { type: 'error', message: 'Missing fields.' });
       }
     } else if (url === '/drafts/save' && req.method === 'POST') {
       const params = await parseFormBody(req);
@@ -787,6 +938,36 @@ function startHttpServer() {
       } else {
         await renderDashboard(res, { type: 'error', message: 'Missing lead ID.' });
       }
+    } else if (url === '/settings/toggle-reply' && req.method === 'POST') {
+      const settingsRes = await query(`SELECT value FROM system_settings WHERE key = 'auto_reply_enabled'`);
+      const currentVal = settingsRes.rows[0]?.value || 'true';
+      const newVal = currentVal === 'true' ? 'false' : 'true';
+      await query(
+        `INSERT INTO system_settings (key, value) VALUES ('auto_reply_enabled', $1)
+         ON CONFLICT (key) DO UPDATE SET value = $1`,
+        [newVal]
+      );
+      await renderDashboard(res, { type: 'success', message: `Auto-Reply successfully ${newVal === 'true' ? 'enabled' : 'disabled'}.` });
+    } else if (url === '/settings/toggle-followup' && req.method === 'POST') {
+      const settingsRes = await query(`SELECT value FROM system_settings WHERE key = 'auto_followup_enabled'`);
+      const currentVal = settingsRes.rows[0]?.value || 'true';
+      const newVal = currentVal === 'true' ? 'false' : 'true';
+      await query(
+        `INSERT INTO system_settings (key, value) VALUES ('auto_followup_enabled', $1)
+         ON CONFLICT (key) DO UPDATE SET value = $1`,
+        [newVal]
+      );
+      await renderDashboard(res, { type: 'success', message: `Auto-Followup successfully ${newVal === 'true' ? 'enabled' : 'disabled'}.` });
+    } else if (url === '/settings/toggle-approval' && req.method === 'POST') {
+      const settingsRes = await query(`SELECT value FROM system_settings WHERE key = 'draft_approval_required'`);
+      const currentVal = settingsRes.rows[0]?.value || 'false';
+      const newVal = currentVal === 'true' ? 'false' : 'true';
+      await query(
+        `INSERT INTO system_settings (key, value) VALUES ('draft_approval_required', $1)
+         ON CONFLICT (key) DO UPDATE SET value = $1`,
+        [newVal]
+      );
+      await renderDashboard(res, { type: 'success', message: `Draft Approval Mode set to ${newVal === 'true' ? 'Manual Approval' : 'Fully Automated Outreach'}.` });
     } else {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('Not Found');
@@ -806,7 +987,29 @@ async function main() {
   try {
     await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS reply_content TEXT DEFAULT NULL;`);
     await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS reply_subject VARCHAR(255) DEFAULT NULL;`);
-    console.log('✔ Database schema verified and updated (reply_content, reply_subject).');
+    await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS ai_reply_draft TEXT DEFAULT NULL;`);
+    await query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS ai_reply_sent BOOLEAN DEFAULT FALSE;`);
+    
+    // settings table
+    await query(`
+      CREATE TABLE IF NOT EXISTS system_settings (
+        key VARCHAR(255) PRIMARY KEY,
+        value VARCHAR(255) NOT NULL
+      );
+    `);
+    const defaults = [
+      { key: 'auto_reply_enabled', value: 'true' },
+      { key: 'auto_followup_enabled', value: 'true' },
+      { key: 'draft_approval_required', value: 'false' }
+    ];
+    for (const d of defaults) {
+      await query(`
+        INSERT INTO system_settings (key, value)
+        VALUES ($1, $2)
+        ON CONFLICT (key) DO NOTHING
+      `, [d.key, d.value]);
+    }
+    console.log('✔ Database schema & system_settings initialized successfully.');
   } catch (err) {
     console.error('Failed to run database schema updates on startup:', err);
   }
