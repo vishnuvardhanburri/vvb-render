@@ -410,6 +410,9 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
             </h1>
             <div style="display: flex; gap: 0.75rem; align-items: center;">
               <span style="font-size: 0.75rem; color: #6b7280;">Last Cycle: ${lastProcessedTime}</span>
+              <form method="POST" action="/test-telegram" style="margin: 0;">
+                <button type="submit" class="btn btn-secondary">Test Telegram</button>
+              </form>
               <form method="POST" action="/trigger" style="margin: 0;">
                 <button type="submit" class="btn btn-secondary" ${isProcessing ? 'disabled' : ''}>
                   ${isProcessing ? 'Running...' : 'Trigger Cycle'}
@@ -584,6 +587,16 @@ function startHttpServer() {
         runOutreachCycle();
       }
       await renderDashboard(res, { type: 'success', message: 'Outreach cycle triggered in background.' });
+    } else if (url === '/test-telegram' && req.method === 'POST') {
+      const success = await sendTelegramNotification(
+        `🔔 <b>Outreach Machine Connection Test</b>\n` +
+        `If you are reading this, your Telegram Bot notifications are configured correctly! 🎉`
+      );
+      if (success) {
+        await renderDashboard(res, { type: 'success', message: 'Test Telegram message sent successfully!' });
+      } else {
+        await renderDashboard(res, { type: 'error', message: 'Failed to send Telegram message. Check that TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set correctly in Render.' });
+      }
     } else if (url === '/leads/replied' && req.method === 'POST') {
       const params = await parseFormBody(req);
       const leadId = params.get('leadId');
