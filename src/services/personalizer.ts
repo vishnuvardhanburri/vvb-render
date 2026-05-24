@@ -90,8 +90,78 @@ interface GeminiOutput {
 }
 
 /**
+ * Robust template-based fallback email generator when AI features are unavailable.
+ */
+function generateTemplateFallbackEmail(
+  companyName: string,
+  jobTitle: string,
+  sequenceStep: number
+): GeminiOutput {
+  const company = companyName.trim();
+  const role = (jobTitle || 'Senior Engineer').trim();
+  
+  if (sequenceStep === 1) {
+    const subject = `quick question regarding ${role} role at ${company}`;
+    const emailBody = [
+      `Hi there,`,
+      ``,
+      `I saw ${company} is hiring a ${role}.`,
+      ``,
+      `I wanted to reach out because I specialize in backend scaling, database query optimization, and production incident response. For example, I recently helped Microsoft harden their incident response, reducing Mean Time to Recovery (MTTR) by 40%.`,
+      ``,
+      `I run a custom backend system that manages email sending safely to protect domain health and improve response rates.`,
+      ``,
+      `Would you be open to a quick 10-15 minute System Signal Audit where we can look at your current architecture bottlenecks for free?`,
+      ``,
+      `You can book a time here: https://cal.com/vishnuvardhanburri/30min`,
+      `Or check out my portfolio: https://vishnuvardhanburri.in`,
+      ``,
+      `Best regards,`,
+      `Vishnu Vardhan Burri`
+    ].join('\n');
+    
+    return {
+      subject,
+      emailBody,
+      suggestedEmail: `hello@${company.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`
+    };
+  } else if (sequenceStep === 2) {
+    const subject = `Re: quick question regarding ${role} role at ${company}`;
+    const emailBody = [
+      `Hi there,`,
+      ``,
+      `Just following up on my previous email. I know you're busy scaling things at ${company}.`,
+      ``,
+      `Let me know if a quick 15-minute chat about optimizing your backend and stability makes sense this week: https://cal.com/vishnuvardhanburri/30min`,
+      `Or check out my portfolio: https://vishnuvardhanburri.in`,
+      ``,
+      `Best regards,`,
+      `Vishnu Vardhan Burri`
+    ].join('\n');
+    
+    return { subject, emailBody };
+  } else {
+    const subject = `closing the loop`;
+    const emailBody = [
+      `Hi there,`,
+      ``,
+      `I won't clutter your inbox further. I'll assume backend scaling and stability isn't a primary focus for ${company} right now.`,
+      ``,
+      `If that changes or you ever need help with query optimization, feel free to reach out.`,
+      ``,
+      `Best regards,`,
+      `Vishnu Vardhan Burri`,
+      `https://vishnuvardhanburri.in`
+    ].join('\n');
+    
+    return { subject, emailBody };
+  }
+}
+
+/**
  * Invokes Gemini API to research the lead details and draft a highly-personalized,
- * human-level outreach email depending on the sequence step.
+ * human-level outreach email depending on the sequence step. Falls back to a robust
+ * template-based personalization if the AI service fails or is not configured.
  */
 export async function generatePersonalizedEmail(
   companyName: string,
@@ -102,8 +172,9 @@ export async function generatePersonalizedEmail(
   scrapedEmails: string[],
   sequenceStep: number
 ): Promise<GeminiOutput> {
-  if (!GEMINI_API_KEY) {
-    throw new Error('Missing GEMINI_API_KEY in environment variables.');
+  if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your_gemini_api_key_here') {
+    console.warn(`[Personalizer] GEMINI_API_KEY is not configured. Falling back to template-based personalization for ${companyName}.`);
+    return generateTemplateFallbackEmail(companyName, jobTitle, sequenceStep);
   }
 
   let prompt = '';
@@ -201,12 +272,8 @@ Return your response ONLY as a JSON object matching this structure:
     const output: GeminiOutput = JSON.parse(jsonText.trim());
     return output;
   } catch (error: any) {
-    console.error(`Gemini API Error for ${companyName} (Step ${sequenceStep}):`, error instanceof Error ? error.message : error);
-    if (error.response?.data) {
-      const details = JSON.stringify(error.response.data);
-      throw new Error(`Gemini API Error (Step ${sequenceStep}): ${error.message} - Details: ${details}`);
-    }
-    throw error;
+    console.warn(`[Personalizer] Gemini API call failed for ${companyName} (Step ${sequenceStep}). Falling back to template-based personalization. Error:`, error.message);
+    return generateTemplateFallbackEmail(companyName, jobTitle, sequenceStep);
   }
 }
 
