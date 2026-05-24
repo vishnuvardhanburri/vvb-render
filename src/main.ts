@@ -93,6 +93,7 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
     const autoReplyEnabled = settings['auto_reply_enabled'] !== 'false';
     const autoFollowupEnabled = settings['auto_followup_enabled'] !== 'false';
     const draftApprovalRequired = settings['draft_approval_required'] === 'true';
+    const aiEnabled = settings['ai_enabled'] !== 'false';
 
     // Fetch stats
     const statsRes = await query(`
@@ -534,6 +535,13 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
           <div style="display: flex; gap: 1rem; align-items: center; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border); padding: 0.75rem 1.2rem; border-radius: 8px; margin-bottom: 2rem;">
             <span style="font-size: 0.7rem; text-transform: uppercase; color: #6b7280; font-weight: bold; letter-spacing: 0.05em;">Automation Settings:</span>
             
+            <form method="POST" action="/settings/toggle-ai" style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+              <span style="font-size: 0.7rem; color: var(--text);">AI Engine:</span>
+              <button type="submit" class="btn" style="padding: 0.35rem 0.7rem; font-size: 0.65rem; background: ${aiEnabled ? 'rgba(59, 130, 246, 0.15)' : 'rgba(245, 158, 11, 0.15)'}; border: 1px solid ${aiEnabled ? 'var(--primary)' : 'var(--warning)'}; color: ${aiEnabled ? 'var(--primary)' : 'var(--warning)'};" title="${aiEnabled ? 'Personalized copywriting via Gemini API is enabled' : 'Bypass AI completely and use clean fallback templates'}">
+                ${aiEnabled ? '● AI MODE' : '○ TEMPLATES ONLY'}
+              </button>
+            </form>
+
             <form method="POST" action="/settings/toggle-reply" style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
               <span style="font-size: 0.7rem; color: var(--text);">Auto-Reply:</span>
               <button type="submit" class="btn" style="padding: 0.35rem 0.7rem; font-size: 0.65rem; background: ${autoReplyEnabled ? 'rgba(16, 185, 129, 0.15)' : 'transparent'}; border: 1px solid ${autoReplyEnabled ? 'var(--success)' : 'var(--border)'}; color: ${autoReplyEnabled ? 'var(--success)' : 'var(--text)'};">
@@ -979,6 +987,16 @@ function startHttpServer() {
         [newVal]
       );
       await renderDashboard(res, { type: 'success', message: `Draft Approval Mode set to ${newVal === 'true' ? 'Manual Approval' : 'Fully Automated Outreach'}.` });
+    } else if (pathname === '/settings/toggle-ai' && req.method === 'POST') {
+      const settingsRes = await query(`SELECT value FROM system_settings WHERE key = 'ai_enabled'`);
+      const currentVal = settingsRes.rows[0]?.value || 'true';
+      const newVal = currentVal === 'true' ? 'false' : 'true';
+      await query(
+        `INSERT INTO system_settings (key, value) VALUES ('ai_enabled', $1)
+         ON CONFLICT (key) DO UPDATE SET value = $1`,
+        [newVal]
+      );
+      await renderDashboard(res, { type: 'success', message: `AI Engine copy generator set to ${newVal === 'true' ? 'AI Mode (Gemini)' : 'Templates Only (No AI)'}.` });
     } else {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('Not Found');
@@ -1012,7 +1030,8 @@ async function main() {
     const defaults = [
       { key: 'auto_reply_enabled', value: 'true' },
       { key: 'auto_followup_enabled', value: 'true' },
-      { key: 'draft_approval_required', value: 'false' }
+      { key: 'draft_approval_required', value: 'false' },
+      { key: 'ai_enabled', value: 'true' }
     ];
     for (const d of defaults) {
       await query(`

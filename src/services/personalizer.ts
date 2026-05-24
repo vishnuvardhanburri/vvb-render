@@ -172,8 +172,17 @@ export async function generatePersonalizedEmail(
   scrapedEmails: string[],
   sequenceStep: number
 ): Promise<GeminiOutput> {
-  if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your_gemini_api_key_here') {
-    console.warn(`[Personalizer] GEMINI_API_KEY is not configured. Falling back to template-based personalization for ${companyName}.`);
+  // Query DB to see if AI Copywriting is disabled
+  let aiEnabled = true;
+  try {
+    const settingsRes = await query(`SELECT value FROM system_settings WHERE key = 'ai_enabled'`);
+    aiEnabled = settingsRes.rows[0]?.value !== 'false';
+  } catch (err) {
+    console.warn('[Personalizer] Failed to read ai_enabled setting for email generation:', err);
+  }
+
+  if (!aiEnabled || !GEMINI_API_KEY || GEMINI_API_KEY === 'your_gemini_api_key_here') {
+    console.log(`[Personalizer] AI Copywriting is ${aiEnabled ? 'enabled but GEMINI_API_KEY is missing' : 'disabled via system settings'}. Generating template-based email for ${companyName} (Step ${sequenceStep}).`);
     return generateTemplateFallbackEmail(companyName, jobTitle, sequenceStep);
   }
 
@@ -506,9 +515,48 @@ export async function researchAndPersonalizeLeads() {
 /**
  * Generates an AI-drafted reply to a client's response using Gemini.
  */
+/**
+ * Generates a template-based reply when AI reply generation is disabled or fails.
+ */
+export function generateTemplateReply(companyName: string): string {
+  const company = companyName.trim();
+  return [
+    `Hi there,`,
+    ``,
+    `Thanks for getting back to me.`,
+    ``,
+    `I'd be happy to discuss how I can help with backend scaling, database query optimization, or incident response at ${company}.`,
+    ``,
+    `Are you open to a quick 10-15 minute chat? You can book a time directly on my calendar here:`,
+    `https://cal.com/vishnuvardhanburri/30min`,
+    ``,
+    `Or feel free to check out my portfolio details: https://vishnuvardhanburri.in`,
+    ``,
+    `Looking forward to hearing from you.`,
+    ``,
+    `Best regards,`,
+    `Vishnu Vardhan Burri`,
+    `Toptal Senior Backend & Platform Engineer`
+  ].join('\n');
+}
+
+/**
+ * Generates an AI-drafted reply to a client's response using Gemini.
+ * Falls back to a clean, professional template reply if AI is disabled or fails.
+ */
 export async function generateAiReply(companyName: string, clientReply: string): Promise<string> {
-  if (!GEMINI_API_KEY) {
-    throw new Error('Missing GEMINI_API_KEY in environment variables.');
+  // Query DB to see if AI Copywriting is disabled
+  let aiEnabled = true;
+  try {
+    const settingsRes = await query(`SELECT value FROM system_settings WHERE key = 'ai_enabled'`);
+    aiEnabled = settingsRes.rows[0]?.value !== 'false';
+  } catch (err) {
+    console.warn('[Personalizer] Failed to read ai_enabled setting for reply generation:', err);
+  }
+
+  if (!aiEnabled || !GEMINI_API_KEY || GEMINI_API_KEY === 'your_gemini_api_key_here') {
+    console.log(`[Personalizer] AI reply generation is ${aiEnabled ? 'enabled but GEMINI_API_KEY is missing' : 'disabled via system settings'}. Generating template-based reply fallback for ${companyName}.`);
+    return generateTemplateReply(companyName);
   }
 
   const prompt = `
@@ -557,11 +605,7 @@ Return ONLY the plain text email body of your reply. Do not wrap in JSON or add 
     }
     return replyText.trim();
   } catch (error: any) {
-    console.error(`Gemini API Error generating reply for ${companyName}:`, error instanceof Error ? error.message : error);
-    if (error.response?.data) {
-      const details = JSON.stringify(error.response.data);
-      throw new Error(`Gemini API Error (Reply): ${error.message} - Details: ${details}`);
-    }
-    throw error;
+    console.warn(`[Personalizer] Gemini API call failed generating reply for ${companyName}. Falling back to template-based reply copy. Error:`, error.message);
+    return generateTemplateReply(companyName);
   }
 }
