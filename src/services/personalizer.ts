@@ -7,7 +7,7 @@ dotenv.config();
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-async function postToGeminiWithRetry(url: string, payload: any, timeoutMs: number = 20000, maxRetries: number = 5): Promise<any> {
+async function postToGeminiWithRetry(url: string, payload: any, timeoutMs: number = 30000, maxRetries: number = 5): Promise<any> {
   let attempt = 0;
   while (attempt < maxRetries) {
     try {
@@ -18,31 +18,41 @@ async function postToGeminiWithRetry(url: string, payload: any, timeoutMs: numbe
       return response;
     } catch (error: any) {
       attempt++;
-      const isRateLimit = error.response?.status === 429;
+      const status = error.response?.status;
+      const isRateLimit = status === 429;
+      const isServiceUnavailable = status === 503;
+      const isTimeout = error.code === 'ECONNABORTED' || error.message?.includes('timeout') || error.code === 'ETIMEDOUT';
       
-      if (isRateLimit && attempt < maxRetries) {
-        let delaySeconds = 20; // Default fallback delay
+      const shouldRetry = (isRateLimit || isServiceUnavailable || isTimeout) && attempt < maxRetries;
+      
+      if (shouldRetry) {
+        let delaySeconds = 5 * attempt; // Progressive delay: 5s, 10s, 15s, 20s
         
-        // Try to parse retryDelay from error response details
-        const details = error.response?.data?.error?.details;
-        if (Array.isArray(details)) {
-          const retryInfo = details.find((d: any) => d.retryDelay || d['@type']?.includes('RetryInfo'));
-          if (retryInfo && retryInfo.retryDelay) {
-            const parsed = parseFloat(retryInfo.retryDelay);
-            if (!isNaN(parsed) && parsed > 0) {
-              delaySeconds = Math.ceil(parsed);
+        if (isRateLimit) {
+          delaySeconds = 20; // Default fallback delay
+          
+          // Try to parse retryDelay from error response details
+          const details = error.response?.data?.error?.details;
+          if (Array.isArray(details)) {
+            const retryInfo = details.find((d: any) => d.retryDelay || d['@type']?.includes('RetryInfo'));
+            if (retryInfo && retryInfo.retryDelay) {
+              const parsed = parseFloat(retryInfo.retryDelay);
+              if (!isNaN(parsed) && parsed > 0) {
+                delaySeconds = Math.ceil(parsed);
+              }
             }
           }
         }
         
-        console.warn(`[Gemini API] Quota/Rate limit reached. Retrying attempt ${attempt}/${maxRetries} after waiting ${delaySeconds}s...`);
+        const reason = isRateLimit ? 'Rate limit (429)' : isServiceUnavailable ? 'High demand (503)' : 'Timeout';
+        console.warn(`[Gemini API] ${reason} on attempt ${attempt}/${maxRetries}. Retrying after waiting ${delaySeconds}s...`);
         
         // Wait for delaySeconds
         await new Promise(resolve => setTimeout(resolve, delaySeconds * 1000));
         continue;
       }
       
-      // If we ran out of retries or it's not a rate limit error, rethrow
+      // If we ran out of retries or it's not a retryable error, rethrow
       throw error;
     }
   }
@@ -179,7 +189,7 @@ Return your response ONLY as a JSON object matching this structure:
           responseMimeType: 'application/json'
         }
       },
-      15000,
+      30000,
       5
     );
 
