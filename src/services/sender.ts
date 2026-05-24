@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { query } from '../db/client.js';
 import { sendTelegramNotification } from './telegram.js';
+import { sendSmtpEmail } from './smtp.js';
 
 dotenv.config();
 
@@ -30,8 +31,6 @@ function getLeadHash(email: string): string {
  */
 export async function pushLeadToMailBluster(
   toEmail: string,
-  subject: string,
-  body: string,
   companyName: string,
   jobTitle: string,
   sequenceStep: number
@@ -43,27 +42,17 @@ export async function pushLeadToMailBluster(
   const leadHash = getLeadHash(toEmail);
   const stepTag = `outreach-step-${sequenceStep}`;
 
-  // Custom fields to pass into MailBluster email templates as merge tags
-  // You must create these custom fields in MailBluster dashboard:
-  //   Brand > Settings > Fields > Add new field
-  //   - email_subject (text)
-  //   - email_body (textarea)
-  //   - company_name (text)
-  //   - job_title (text)
-  //   - sequence_step (text)
-  //   - sender_name (text)
+  // Strip down custom fields payload to respect MailBluster's strict 50-character limit
   const leadPayload: any = {
     email: toEmail,
-    firstName: companyName,  // Using firstName to store company for display
+    firstName: companyName.substring(0, 50),  // Using firstName to store company for display
     subscribed: true,
     overrideExisting: true,
     fields: {
-      email_subject: subject,
-      email_body: body.replace(/\n/g, '<br>'),  // Convert newlines to HTML breaks for email template
-      company_name: companyName,
-      job_title: jobTitle,
+      company_name: companyName.substring(0, 50),
+      job_title: jobTitle.substring(0, 50),
       sequence_step: String(sequenceStep),
-      sender_name: SENDER_NAME,
+      sender_name: SENDER_NAME.substring(0, 50),
     },
     tags: [stepTag, 'outreach-active'],
   };
@@ -213,25 +202,38 @@ export async function processOutboundEmails(limitCount: number = 10) {
   for (const row of res.rows) {
     const { id, recipient_email, subject, body, lead_id, sequence_step, company_name, job_title } = row;
     try {
-      console.log(`Pushing Step ${sequence_step} lead ${id} (${recipient_email}) to MailBluster...`);
+      console.log(`Sending Step ${sequence_step} email to ${recipient_email} via Hostinger SMTP...`);
       
       // Update state to 'sending' to avoid double pushes
       await query(`UPDATE emails SET status = 'sending' WHERE id = $1`, [id]);
       
-      const result = await pushLeadToMailBluster(
-        recipient_email,
-        subject,
-        body,
-        company_name,
-        job_title || '',
-        sequence_step
-      );
+      // 1. Dispatch cold email directly via SMTP
+      const smtpSuccess = await sendSmtpEmail(recipient_email, subject, body.replace(/\n/g, '<br>'));
+      if (!smtpSuccess) {
+        throw new Error('SMTP delivery failed. Ensure IMAP_USER and IMAP_PASSWORD are set in environment variables.');
+      }
+      
+      // 2. Sync lead metadata to MailBluster (avoiding long subject/body custom fields to bypass 50-character limit)
+      let mailBlusterResult = 'MailBluster sync skipped (no key)';
+      if (MAILBLUSTER_API_KEY && MAILBLUSTER_API_KEY !== 'your_mailbluster_api_key_here') {
+        try {
+          mailBlusterResult = await pushLeadToMailBluster(
+            recipient_email,
+            company_name,
+            job_title || '',
+            sequence_step
+          );
+        } catch (mbErr) {
+          console.warn(`[MailBluster Sync Warning] Failed to sync ${recipient_email}:`, mbErr instanceof Error ? mbErr.message : mbErr);
+          mailBlusterResult = `Sync failed: ${mbErr instanceof Error ? mbErr.message : String(mbErr)}`;
+        }
+      }
       
       await query('BEGIN');
-      // Mark email as sent (pushed to MailBluster)
+      // Mark email as sent
       await query(
         `UPDATE emails SET status = 'sent', sent_at = NOW(), error_message = $1 WHERE id = $2`,
-        [`MailBluster: ${result}`, id]
+        [`SMTP: Success | MailBluster: ${mailBlusterResult}`, id]
       );
 
       // Determine follow-up schedule
@@ -257,12 +259,12 @@ export async function processOutboundEmails(limitCount: number = 10) {
       );
       
       await query('COMMIT');
-      console.log(`✔ Lead successfully pushed to MailBluster: ${recipient_email} [${result}]`);
+      console.log(`✔ Lead email successfully sent & synced to MailBluster: ${recipient_email} [${mailBlusterResult}]`);
       
       // Telegram Notification
       let emoji = sequence_step === 1 ? '🚀' : sequence_step === 2 ? '✉️' : '🏁';
       await sendTelegramNotification(
-        `${emoji} <b>Outreach Pushed to MailBluster</b>\n` +
+        `${emoji} <b>Outreach Dispatch Success</b>\n` +
         `Company: <b>${company_name}</b>\n` +
         `Recipient: <code>${recipient_email}</code>\n` +
         `Step: <b>${sequence_step}/3</b>\n` +
@@ -276,7 +278,7 @@ export async function processOutboundEmails(limitCount: number = 10) {
       await new Promise(resolve => setTimeout(resolve, 1500));
     } catch (err) {
       await query('ROLLBACK');
-      console.error(`❌ Failed to push lead ${id} to MailBluster (${recipient_email}):`, err);
+      console.error(`❌ Failed to dispatch email for lead ${id} (${recipient_email}):`, err);
       
       const errMsg = err instanceof Error ? err.message : String(err);
       await query('BEGIN');
@@ -291,7 +293,7 @@ export async function processOutboundEmails(limitCount: number = 10) {
       await query('COMMIT');
 
       await sendTelegramNotification(
-        `⚠️ <b>MailBluster Push Failure</b>\n` +
+        `⚠️ <b>Outreach Dispatch Failure</b>\n` +
         `Company: <b>${company_name}</b>\n` +
         `Recipient: <code>${recipient_email}</code>\n` +
         `Error: <code>${errMsg}</code>`
