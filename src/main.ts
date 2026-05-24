@@ -759,16 +759,26 @@ async function renderDashboard(res: http.ServerResponse, notification?: { type: 
 // Start HTTP web server
 function startHttpServer() {
   const server = http.createServer(async (req, res) => {
-    const url = req.url || '/';
-    
-    if (url === '/' && req.method === 'GET') {
+    const reqUrl = req.url || '/';
+    const [pathname, search] = reqUrl.split('?');
+    const searchParams = new URLSearchParams(search || '');
+    const isCron = req.headers['user-agent']?.toLowerCase().includes('cron-job') || 
+                   searchParams.get('json') === 'true' || 
+                   pathname === '/api/trigger';
+
+    if (pathname === '/' && req.method === 'GET') {
       await renderDashboard(res);
-    } else if (url === '/trigger' && req.method === 'POST') {
+    } else if ((pathname === '/trigger' || pathname === '/api/trigger') && (req.method === 'POST' || req.method === 'GET')) {
       if (!isProcessing) {
         runOutreachCycle();
       }
-      await renderDashboard(res, { type: 'success', message: 'Outreach cycle triggered in background.' });
-    } else if (url === '/test-telegram' && req.method === 'POST') {
+      if (isCron || req.method === 'GET' || req.headers['accept']?.includes('application/json')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Outreach cycle triggered in background.' }));
+      } else {
+        await renderDashboard(res, { type: 'success', message: 'Outreach cycle triggered in background.' });
+      }
+    } else if (pathname === '/test-telegram' && req.method === 'POST') {
       const result = await sendTelegramNotification(
         `🔔 <b>Outreach Machine Connection Test</b>\n` +
         `If you are reading this, your Telegram Bot notifications are configured correctly! 🎉`
@@ -778,12 +788,12 @@ function startHttpServer() {
       } else {
         await renderDashboard(res, { type: 'error', message: `Failed to send Telegram message. Error: ${result.error || 'Unknown error'}` });
       }
-    } else if (url === '/leads/reset-failed' && req.method === 'POST') {
+    } else if (pathname === '/leads/reset-failed' && req.method === 'POST') {
       await query(
         `UPDATE leads SET status = 'discovered', updated_at = NOW() WHERE status IN ('scraping_failed', 'failed', 'validation_failed')`
       );
       await renderDashboard(res, { type: 'success', message: 'All failed/bounced leads reset to Discovered status successfully.' });
-    } else if (url === '/leads/replied' && req.method === 'POST') {
+    } else if (pathname === '/leads/replied' && req.method === 'POST') {
       const params = await parseFormBody(req);
       const leadId = params.get('leadId');
       if (leadId) {
@@ -808,7 +818,7 @@ function startHttpServer() {
       } else {
         await renderDashboard(res, { type: 'error', message: 'Invalid lead ID.' });
       }
-    } else if (url === '/leads/send-ai-reply' && req.method === 'POST') {
+    } else if (pathname === '/leads/send-ai-reply' && req.method === 'POST') {
       const params = await parseFormBody(req);
       const leadId = params.get('leadId');
       const replyBody = params.get('replyBody');
@@ -848,7 +858,7 @@ function startHttpServer() {
       } else {
         await renderDashboard(res, { type: 'error', message: 'Missing fields.' });
       }
-    } else if (url === '/drafts/save' && req.method === 'POST') {
+    } else if (pathname === '/drafts/save' && req.method === 'POST') {
       const params = await parseFormBody(req);
       const emailId = params.get('emailId');
       const leadId = params.get('leadId');
@@ -871,7 +881,7 @@ function startHttpServer() {
       } else {
         await renderDashboard(res, { type: 'error', message: 'Missing fields.' });
       }
-    } else if (url === '/drafts/approve' && req.method === 'POST') {
+    } else if (pathname === '/drafts/approve' && req.method === 'POST') {
       const params = await parseFormBody(req);
       const emailId = params.get('emailId');
       const leadId = params.get('leadId');
@@ -930,7 +940,7 @@ function startHttpServer() {
       } else {
         await renderDashboard(res, { type: 'error', message: 'Missing fields.' });
       }
-    } else if (url === '/drafts/delete' && req.method === 'POST') {
+    } else if (pathname === '/drafts/delete' && req.method === 'POST') {
       const params = await parseFormBody(req);
       const leadId = params.get('leadId');
       if (leadId) {
@@ -939,7 +949,7 @@ function startHttpServer() {
       } else {
         await renderDashboard(res, { type: 'error', message: 'Missing lead ID.' });
       }
-    } else if (url === '/settings/toggle-reply' && req.method === 'POST') {
+    } else if (pathname === '/settings/toggle-reply' && req.method === 'POST') {
       const settingsRes = await query(`SELECT value FROM system_settings WHERE key = 'auto_reply_enabled'`);
       const currentVal = settingsRes.rows[0]?.value || 'true';
       const newVal = currentVal === 'true' ? 'false' : 'true';
@@ -949,7 +959,7 @@ function startHttpServer() {
         [newVal]
       );
       await renderDashboard(res, { type: 'success', message: `Auto-Reply successfully ${newVal === 'true' ? 'enabled' : 'disabled'}.` });
-    } else if (url === '/settings/toggle-followup' && req.method === 'POST') {
+    } else if (pathname === '/settings/toggle-followup' && req.method === 'POST') {
       const settingsRes = await query(`SELECT value FROM system_settings WHERE key = 'auto_followup_enabled'`);
       const currentVal = settingsRes.rows[0]?.value || 'true';
       const newVal = currentVal === 'true' ? 'false' : 'true';
@@ -959,7 +969,7 @@ function startHttpServer() {
         [newVal]
       );
       await renderDashboard(res, { type: 'success', message: `Auto-Followup successfully ${newVal === 'true' ? 'enabled' : 'disabled'}.` });
-    } else if (url === '/settings/toggle-approval' && req.method === 'POST') {
+    } else if (pathname === '/settings/toggle-approval' && req.method === 'POST') {
       const settingsRes = await query(`SELECT value FROM system_settings WHERE key = 'draft_approval_required'`);
       const currentVal = settingsRes.rows[0]?.value || 'false';
       const newVal = currentVal === 'true' ? 'false' : 'true';

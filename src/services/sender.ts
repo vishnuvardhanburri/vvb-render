@@ -76,7 +76,7 @@ export async function pushLeadToMailBluster(
       {
         headers: {
           'Content-Type': 'application/json',
-          'x-mailbluster-api-key': MAILBLUSTER_API_KEY,
+          'Authorization': MAILBLUSTER_API_KEY,
         },
         timeout: 15000,
       }
@@ -91,7 +91,7 @@ export async function pushLeadToMailBluster(
           {
             headers: {
               'Content-Type': 'application/json',
-              'x-mailbluster-api-key': MAILBLUSTER_API_KEY,
+              'Authorization': MAILBLUSTER_API_KEY,
             },
             timeout: 15000,
           }
@@ -112,7 +112,7 @@ export async function pushLeadToMailBluster(
           {
             headers: {
               'Content-Type': 'application/json',
-              'x-mailbluster-api-key': MAILBLUSTER_API_KEY,
+              'Authorization': MAILBLUSTER_API_KEY,
             },
             timeout: 15000,
           }
@@ -140,7 +140,7 @@ export async function removeMailBlusterTag(email: string, tag: string): Promise<
       `${MAILBLUSTER_API_BASE}/leads/${leadHash}`,
       {
         headers: {
-          'x-mailbluster-api-key': MAILBLUSTER_API_KEY,
+          'Authorization': MAILBLUSTER_API_KEY,
         },
         timeout: 10000,
       }
@@ -160,7 +160,7 @@ export async function removeMailBlusterTag(email: string, tag: string): Promise<
         {
           headers: {
             'Content-Type': 'application/json',
-            'x-mailbluster-api-key': MAILBLUSTER_API_KEY,
+            'Authorization': MAILBLUSTER_API_KEY,
           },
           timeout: 10000,
         }
