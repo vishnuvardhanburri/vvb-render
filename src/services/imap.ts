@@ -7,10 +7,10 @@ import { sendSmtpEmail } from './smtp.js';
 
 dotenv.config();
 
-const IMAP_HOST = process.env.IMAP_HOST;
+const IMAP_HOST = process.env.IMAP_HOST || process.env.SMTP_HOST || 'imap.hostinger.com';
 const IMAP_PORT = parseInt(process.env.IMAP_PORT || '993');
-const IMAP_USER = process.env.IMAP_USER;
-const IMAP_PASSWORD = process.env.IMAP_PASSWORD;
+const IMAP_USER = process.env.IMAP_USER || process.env.SMTP_USER;
+const IMAP_PASSWORD = process.env.IMAP_PASSWORD || process.env.SMTP_PASS || process.env.SMTP_PASSWORD;
 
 /**
  * Checks the configured IMAP inbox for replies from active leads

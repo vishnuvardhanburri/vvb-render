@@ -3,9 +3,9 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const IMAP_USER = process.env.IMAP_USER;
-const IMAP_PASSWORD = process.env.IMAP_PASSWORD;
-const IMAP_HOST = process.env.IMAP_HOST; // E.g. imap.hostinger.com -> we can guess SMTP host is smtp.hostinger.com
+const IMAP_USER = process.env.IMAP_USER || process.env.SMTP_USER;
+const IMAP_PASSWORD = process.env.IMAP_PASSWORD || process.env.SMTP_PASS || process.env.SMTP_PASSWORD;
+const IMAP_HOST = process.env.IMAP_HOST || process.env.SMTP_HOST; // E.g. imap.hostinger.com -> we can guess SMTP host is smtp.hostinger.com
 const SENDER_EMAIL = process.env.SENDER_EMAIL || IMAP_USER || '';
 const SENDER_NAME = process.env.SENDER_NAME || 'Vishnu Vardhan Burri';
 
